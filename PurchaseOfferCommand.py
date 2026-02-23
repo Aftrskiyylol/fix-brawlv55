@@ -9,8 +9,7 @@ class PurchaseOfferCommand(LogicCommand):
 
     def encode(self, fields):
         LogicCommand.encode(self, fields)
-        # Подтверждение успешной покупки
-        self.writeVInt(1)  # 1 = успех
+        self.writeVInt(1)
         self.writeDataReference(0)
         self.writeVInt(0)
         return self.messagePayload
@@ -53,6 +52,7 @@ class PurchaseOfferCommand(LogicCommand):
             player = calling_instance.player
             if not player:
                 print("[ERROR] Player not found")
+                self.send_home_data(calling_instance)
                 return
 
             offer_index = fields.get("OfferIndex", 0)
@@ -63,20 +63,20 @@ class PurchaseOfferCommand(LogicCommand):
 
             print(f"[PURCHASE] Player {player.get('Name','Unknown')} buying cat={shop_category}, item={item_id}, price={price}, curr={currency_type}")
 
-            # Проверяем валюту
-            if currency_type == 0:  # Gems
+            # Проверка валюты
+            if currency_type == 0:
                 if player.get("Gems", 0) < price:
                     print("[ERROR] Not enough Gems")
                     self.send_home_data(calling_instance)
                     return
                 player["Gems"] = player.get("Gems", 0) - price
-            elif currency_type == 1:  # Coins
+            elif currency_type == 1:
                 if player.get("Coins", 0) < price:
                     print("[ERROR] Not enough Coins")
                     self.send_home_data(calling_instance)
                     return
                 player["Coins"] = player.get("Coins", 0) - price
-            elif currency_type == 2:  # StarPoints
+            elif currency_type == 2:
                 if player.get("StarPoints", 0) < price:
                     print("[ERROR] Not enough StarPoints")
                     self.send_home_data(calling_instance)
@@ -85,7 +85,7 @@ class PurchaseOfferCommand(LogicCommand):
 
             # Выдача скина
             item_category = shop_category[0] if isinstance(shop_category, list) else 0
-            if item_category == 16:  # скины
+            if item_category == 16:
                 brawler_id = item_id[0] if isinstance(item_id, list) else 0
                 skin_id = item_id[1] if isinstance(item_id, list) and len(item_id) > 1 else 0
 
@@ -103,12 +103,12 @@ class PurchaseOfferCommand(LogicCommand):
 
                 player["OwnedBrawlers"] = owned
 
-            # Сохраняем данные
+            # Сохраняем
             self.save_player_data(calling_instance, player)
 
-            # Отправляем обновлённый HomeData (анимация)
+            # ОТПРАВЛЯЕМ HOME DATA (анимация!)
             self.send_home_data(calling_instance)
-            print(f"[PURCHASE] Completed successfully for {player.get('Name','Unknown')}")
+            print(f"[PURCHASE] Completed for {player.get('Name','Unknown')}")
 
         except Exception as e:
             print(f"[EXECUTE ERROR] {e}")
@@ -124,13 +124,17 @@ class PurchaseOfferCommand(LogicCommand):
         except Exception as e:
             print(f"[DB ERROR] {e}")
 
+    # ========== ЭТО ГЛАВНЫЙ ФИКС ==========
     def send_home_data(self, calling_instance):
         try:
             from Heart.Packets.Server.OwnHomeDataMessage import OwnHomeDataMessage
             msg = OwnHomeDataMessage(calling_instance)
             msg.encode()
-            Messaging.send(calling_instance, msg.buffer)
-            print("[HOME] Sent HomeData")
+            if hasattr(msg, 'buffer') and msg.buffer:
+                Messaging.send(calling_instance, msg.buffer)
+                print("[HOME] Sent HomeData")
+            else:
+                print("[HOME] No buffer")
         except Exception as e:
             print(f"[HOME ERROR] {e}")
 
