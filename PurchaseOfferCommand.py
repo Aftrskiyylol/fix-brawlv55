@@ -18,12 +18,18 @@ class PurchaseOfferCommand(LogicCommand):
         fields = {}
         try:
             LogicCommand.decode(calling_instance, fields, False)
-            fields["OfferIndex"] = self.safe_read_vint(calling_instance, 0)
-            fields["ShopCategory"] = self.safe_read_dataref(calling_instance, [0, 0])
-            fields["ItemID"] = self.safe_read_dataref(calling_instance, [0, 0])
-            fields["CurrencyType"] = self.safe_read_vint(calling_instance, 0)
-            fields["Price"] = self.safe_read_vint(calling_instance, 0)
-            fields["Unk6"] = self.safe_read_vint(calling_instance, 0)
+
+            # ⚠ ПРАВИЛЬНЫЙ ПОРЯДОК ПОЛЕЙ (как в рабочем протоколе)
+            fields["OfferIndex"] = calling_instance.readVInt()
+            fields["CurrencyType"] = calling_instance.readVInt()
+            fields["ShopCategory"] = calling_instance.readDataReference()
+            fields["ItemID"] = calling_instance.readDataReference()
+            fields["Price"] = calling_instance.readVInt()
+            fields["Unk6"] = calling_instance.readVInt()
+
+            print(f"[DECODE] OfferIndex={fields['OfferIndex']}, Currency={fields['CurrencyType']}, "
+                  f"Cat={fields['ShopCategory']}, Item={fields['ItemID']}, Price={fields['Price']}")
+
         except Exception as e:
             print(f"[DECODE ERROR] {e}")
             traceback.print_exc()
@@ -59,9 +65,9 @@ class PurchaseOfferCommand(LogicCommand):
             player_dict = player.__dict__ if hasattr(player, '__dict__') else player
 
             offer_index = fields.get("OfferIndex", 0)
+            currency_type = fields.get("CurrencyType", 0)
             shop_category = fields.get("ShopCategory", [0, 0])
             item_id = fields.get("ItemID", [0, 0])
-            currency_type = fields.get("CurrencyType", 0)
             price = fields.get("Price", 0)
 
             player_name = player_dict.get('Name', 'Unknown')
@@ -143,6 +149,8 @@ class PurchaseOfferCommand(LogicCommand):
                 db = calling_instance.player.db
             elif hasattr(calling_instance, 'parent') and hasattr(calling_instance.parent, 'db'):
                 db = calling_instance.parent.db
+            elif hasattr(calling_instance, 'connection') and hasattr(calling_instance.connection, 'db'):
+                db = calling_instance.connection.db
 
             if db:
                 player_data = player.__dict__ if hasattr(player, '__dict__') else player
@@ -173,18 +181,21 @@ class PurchaseOfferCommand(LogicCommand):
             elif hasattr(msg, 'data'):
                 buffer = msg.data
             
-            if buffer:
+            if buffer and len(buffer) > 0:
                 try:
                     Messaging.send(calling_instance, buffer)
-                    print("[HOME] Sent HomeData")
+                    print("[HOME] Sent HomeData via Messaging")
                 except:
                     try:
-                        calling_instance.send(buffer)
-                        print("[HOME] Sent direct")
+                        if hasattr(calling_instance, 'send'):
+                            calling_instance.send(buffer)
+                            print("[HOME] Sent direct")
+                        else:
+                            print("[HOME] Cannot send directly")
                     except Exception as e:
                         print(f"[HOME] Send failed: {e}")
             else:
-                print("[HOME] No buffer")
+                print("[HOME] No valid buffer")
         except Exception as e:
             print(f"[HOME ERROR] {e}")
 
