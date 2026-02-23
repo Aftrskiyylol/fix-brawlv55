@@ -21,31 +21,40 @@ class PurchaseOfferCommand(LogicCommand):
             print(f"[DECODE SKIP] Not a valid message: {type(calling_instance)}")
             return fields
 
+        # Защита от кривого payload
         try:
             LogicCommand.decode(calling_instance, fields, False)
         except Exception:
             pass
 
         # 🔹 Безопасное чтение всех полей
-        for key, reader in [
-            ("OfferIndex", calling_instance.readVInt),
-            ("CurrencyType", calling_instance.readVInt),
-            ("ShopCategory", calling_instance.readDataReference),
-            ("ItemID", calling_instance.readDataReference),
-            ("Price", calling_instance.readVInt),
-            ("Unk6", calling_instance.readVInt),
-        ]:
+        def safe_read(reader, default):
             try:
-                fields[key] = reader()
+                return reader()
             except Exception:
-                if key in ["ShopCategory", "ItemID"]:
-                    fields[key] = [0, 0]
-                else:
-                    fields[key] = 0
+                return default
+
+        fields["OfferIndex"] = safe_read(calling_instance.readVInt, 0)
+        fields["CurrencyType"] = safe_read(calling_instance.readVInt, 0)
+        fields["ShopCategory"] = safe_read(calling_instance.readDataReference, [0, 0])
+        fields["ItemID"] = safe_read(calling_instance.readDataReference, [0, 0])
+        fields["Price"] = safe_read(calling_instance.readVInt, 0)
+        fields["Unk6"] = safe_read(calling_instance.readVInt, 0)
+
+        # 🔹 Ограничение валидных значений
+        if fields["OfferIndex"] < 0 or fields["OfferIndex"] > 10000:
+            fields["OfferIndex"] = 0
+        if fields["CurrencyType"] not in [0, 1, 2]:
+            fields["CurrencyType"] = 0
+        if not isinstance(fields["ShopCategory"], list) or len(fields["ShopCategory"]) != 2:
+            fields["ShopCategory"] = [0, 0]
+        if not isinstance(fields["ItemID"], list) or len(fields["ItemID"]) != 2:
+            fields["ItemID"] = [0, 0]
+        if fields["Price"] < 0:
+            fields["Price"] = 0
 
         print(f"[DECODE] OfferIndex={fields['OfferIndex']}, Currency={fields['CurrencyType']}, "
               f"Cat={fields['ShopCategory']}, Item={fields['ItemID']}, Price={fields['Price']}")
-
         return fields
 
     def execute(self, calling_instance, fields):
@@ -66,7 +75,7 @@ class PurchaseOfferCommand(LogicCommand):
             player_name = player_dict.get('Name', 'Unknown')
             print(f"[PURCHASE] Player {player_name} buying cat={shop_category}, item={item_id}, price={price}, curr={currency_type}")
 
-            if price <= 0 or currency_type not in [0, 1, 2]:
+            if price <= 0:
                 print(f"[PURCHASE] Not a real purchase (price={price}, currency={currency_type})")
                 self.send_home_data(calling_instance)
                 return
@@ -108,7 +117,7 @@ class PurchaseOfferCommand(LogicCommand):
                         print(f"[PURCHASE] Skin {skin_id} added for brawler {brawler_id}")
                     player.OwnedBrawlers = owned
 
-            # 🔹 Сохраняем и отправляем HomeData
+            # 🔹 Сохраняем данные и отправляем HomeData
             self.save_player_data(calling_instance, player)
             self.send_home_data(calling_instance)
             print(f"[PURCHASE] Completed for {player_name}")
@@ -136,11 +145,11 @@ class PurchaseOfferCommand(LogicCommand):
             msg = OwnHomeDataMessage(calling_instance)
             msg.encode()
             buffer = getattr(msg, 'buffer', None) or getattr(msg, 'payload', None) or getattr(msg, 'data', None)
-            if buffer and len(buffer) > 0:
+            if buffer:
                 try:
                     Messaging.send(calling_instance, buffer)
                     print("[HOME] Sent HomeData via Messaging")
-                except:
+                except Exception:
                     if hasattr(calling_instance, 'send'):
                         calling_instance.send(buffer)
                         print("[HOME] Sent direct")
