@@ -40,7 +40,7 @@ class PurchaseOfferCommand(LogicCommand):
         fields["Price"] = safe_read(calling_instance.readVInt, 0)
         fields["Unk6"] = safe_read(calling_instance.readVInt, 0)
 
-        # 🔹 Ограничение валидных значений
+        # Ограничение валидных значений
         if fields["OfferIndex"] < 0 or fields["OfferIndex"] > 10000:
             fields["OfferIndex"] = 0
         if fields["CurrencyType"] not in [0, 1, 2]:
@@ -146,19 +146,17 @@ class PurchaseOfferCommand(LogicCommand):
             buffer = getattr(msg, 'buffer', None) or getattr(msg, 'payload', None) or getattr(msg, 'data', None)
 
             if buffer:
-                # 🔹 Проверяем метод send на соединении
                 if hasattr(calling_instance, 'send') and callable(calling_instance.send):
                     calling_instance.send(buffer)
-                    print("[HOME] Sent HomeData directly via send()")
+                    print("[HOME] Sent HomeData via direct send()")
                 else:
-                    # Если нет send(), используем Messaging как fallback
                     try:
                         Messaging.send(calling_instance, buffer)
                         print("[HOME] Sent HomeData via Messaging")
                     except Exception as e:
-                        print(f"[HOME ERROR] Could not send: {e}")
+                        print(f"[HOME ERROR] Messaging send failed: {e}")
             else:
-                print("[HOME] No valid buffer to send")
+                print("[HOME] No buffer to send")
         except Exception as e:
             print(f"[HOME ERROR] {e}")
 
