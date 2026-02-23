@@ -55,34 +55,44 @@ class PurchaseOfferCommand(LogicCommand):
                 self.send_home_data(calling_instance)
                 return
 
-            # Извлекаем данные
+            # Преобразуем объект в словарь если нужно
+            if hasattr(player, '__dict__'):
+                player_dict = player.__dict__
+            else:
+                player_dict = player
+
             offer_index = fields.get("OfferIndex", 0)
             shop_category = fields.get("ShopCategory", [0, 0])
             item_id = fields.get("ItemID", [0, 0])
             currency_type = fields.get("CurrencyType", 0)
             price = fields.get("Price", 0)
 
-            print(f"[PURCHASE] Player {player.get('Name','Unknown')} buying cat={shop_category}, item={item_id}, price={price}, curr={currency_type}")
+            player_name = player_dict.get('Name', 'Unknown')
+            print(f"[PURCHASE] Player {player_name} buying cat={shop_category}, item={item_id}, price={price}, curr={currency_type}")
 
-            # Проверка валюты
+            # Проверка валюты через словарь
             if currency_type == 0:
-                if player.get("Gems", 0) < price:
+                if player_dict.get("Gems", 0) < price:
                     print("[ERROR] Not enough Gems")
                     self.send_home_data(calling_instance)
                     return
-                player["Gems"] = player.get("Gems", 0) - price
+                # Устанавливаем через объект
+                if hasattr(player, 'Gems'):
+                    player.Gems = player_dict.get("Gems", 0) - price
             elif currency_type == 1:
-                if player.get("Coins", 0) < price:
+                if player_dict.get("Coins", 0) < price:
                     print("[ERROR] Not enough Coins")
                     self.send_home_data(calling_instance)
                     return
-                player["Coins"] = player.get("Coins", 0) - price
+                if hasattr(player, 'Coins'):
+                    player.Coins = player_dict.get("Coins", 0) - price
             elif currency_type == 2:
-                if player.get("StarPoints", 0) < price:
+                if player_dict.get("StarPoints", 0) < price:
                     print("[ERROR] Not enough StarPoints")
                     self.send_home_data(calling_instance)
                     return
-                player["StarPoints"] = player.get("StarPoints", 0) - price
+                if hasattr(player, 'StarPoints'):
+                    player.StarPoints = player_dict.get("StarPoints", 0) - price
 
             # Выдача скина
             item_category = shop_category[0] if isinstance(shop_category, list) else 0
@@ -90,7 +100,7 @@ class PurchaseOfferCommand(LogicCommand):
                 brawler_id = item_id[0] if isinstance(item_id, list) else 0
                 skin_id = item_id[1] if isinstance(item_id, list) and len(item_id) > 1 else 0
 
-                owned = player.get("OwnedBrawlers", {})
+                owned = player_dict.get("OwnedBrawlers", {})
                 key = str(brawler_id)
                 if key not in owned:
                     owned[key] = {"Skins":[]}
@@ -102,22 +112,31 @@ class PurchaseOfferCommand(LogicCommand):
                     owned[key]["Skins"].append(skin_id)
                     print(f"[PURCHASE] Skin {skin_id} added for brawler {brawler_id}")
 
-                player["OwnedBrawlers"] = owned
+                # Сохраняем обратно в объект
+                if hasattr(player, 'OwnedBrawlers'):
+                    player.OwnedBrawlers = owned
+                elif hasattr(player, '__dict__'):
+                    player.__dict__['OwnedBrawlers'] = owned
 
             # Сохраняем
             self.save_player_data(calling_instance, player)
 
             # Отправляем home data (анимация!)
             self.send_home_data(calling_instance)
-            print(f"[PURCHASE] Completed for {player.get('Name','Unknown')}")
+            print(f"[PURCHASE] Completed for {player_name}")
 
         except Exception as e:
             print(f"[EXECUTE ERROR] {e}")
             traceback.print_exc()
             self.send_home_data(calling_instance)
 
-    def save_player_data(self, calling_instance, player_data):
+    def save_player_data(self, calling_instance, player):
         try:
+            if hasattr(player, '__dict__'):
+                player_data = player.__dict__
+            else:
+                player_data = player
+
             cursor = calling_instance.db.cursor()
             cursor.execute("UPDATE main SET Data=? WHERE Token=?", (json.dumps(player_data), calling_instance.player_token))
             calling_instance.db.commit()
