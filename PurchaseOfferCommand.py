@@ -55,6 +55,7 @@ class PurchaseOfferCommand(LogicCommand):
                 self.send_home_data(calling_instance)
                 return
 
+            # Извлекаем данные
             offer_index = fields.get("OfferIndex", 0)
             shop_category = fields.get("ShopCategory", [0, 0])
             item_id = fields.get("ItemID", [0, 0])
@@ -106,7 +107,7 @@ class PurchaseOfferCommand(LogicCommand):
             # Сохраняем
             self.save_player_data(calling_instance, player)
 
-            # ОТПРАВЛЯЕМ HOME DATA (анимация!)
+            # Отправляем home data (анимация!)
             self.send_home_data(calling_instance)
             print(f"[PURCHASE] Completed for {player.get('Name','Unknown')}")
 
@@ -124,7 +125,6 @@ class PurchaseOfferCommand(LogicCommand):
         except Exception as e:
             print(f"[DB ERROR] {e}")
 
-    # ========== ЭТО ГЛАВНЫЙ ФИКС ==========
     def send_home_data(self, calling_instance):
         try:
             from Heart.Packets.Server.OwnHomeDataMessage import OwnHomeDataMessage
