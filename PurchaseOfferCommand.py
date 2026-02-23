@@ -21,7 +21,6 @@ class PurchaseOfferCommand(LogicCommand):
             print(f"[DECODE SKIP] Not a valid message: {type(calling_instance)}")
             return fields
 
-        # Защита от кривого payload
         try:
             LogicCommand.decode(calling_instance, fields, False)
         except Exception:
@@ -145,14 +144,21 @@ class PurchaseOfferCommand(LogicCommand):
             msg = OwnHomeDataMessage(calling_instance)
             msg.encode()
             buffer = getattr(msg, 'buffer', None) or getattr(msg, 'payload', None) or getattr(msg, 'data', None)
+
             if buffer:
-                try:
-                    Messaging.send(calling_instance, buffer)
-                    print("[HOME] Sent HomeData via Messaging")
-                except Exception:
-                    if hasattr(calling_instance, 'send'):
-                        calling_instance.send(buffer)
-                        print("[HOME] Sent direct")
+                # 🔹 Проверяем метод send на соединении
+                if hasattr(calling_instance, 'send') and callable(calling_instance.send):
+                    calling_instance.send(buffer)
+                    print("[HOME] Sent HomeData directly via send()")
+                else:
+                    # Если нет send(), используем Messaging как fallback
+                    try:
+                        Messaging.send(calling_instance, buffer)
+                        print("[HOME] Sent HomeData via Messaging")
+                    except Exception as e:
+                        print(f"[HOME ERROR] Could not send: {e}")
+            else:
+                print("[HOME] No valid buffer to send")
         except Exception as e:
             print(f"[HOME ERROR] {e}")
 
