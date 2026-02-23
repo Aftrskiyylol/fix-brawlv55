@@ -29,9 +29,9 @@ class PurchaseOfferCommand(LogicCommand):
                 fields["ShopCategory"] = self.readDataReference()
                 fields["ItemID"] = self.readDataReference()
                 fields["Price"] = self.readVInt()
-            except Exception as e:
+            except:
                 # если не хватает байтов — просто игнор
-                print(f"[DECODE] Not enough data: {e}")
+                pass
 
             print(f"[DECODE] {fields}")
 
@@ -83,7 +83,7 @@ class PurchaseOfferCommand(LogicCommand):
             traceback.print_exc()
 
     # --------------------------------
-    # ИСПРАВЛЕННЫЙ МЕТОД ОТПРАВКИ HOME DATA
+    # САМЫЙ ВАЖНЫЙ ФИКС (OutOfSync fix)
     # --------------------------------
     def send_home_data(self, calling_instance):
         try:
@@ -92,31 +92,13 @@ class PurchaseOfferCommand(LogicCommand):
             msg = OwnHomeDataMessage(calling_instance)
             msg.encode()
 
-            # ✅ Получаем закодированный буфер (обычно хранится в .buffer или .payload)
-            buffer = None
-            if hasattr(msg, 'buffer') and msg.buffer:
-                buffer = msg.buffer
-            elif hasattr(msg, 'payload') and msg.payload:
-                buffer = msg.payload
-            else:
-                # Если неизвестно имя поля — попробуем найти первое байтовое поле
-                for attr in dir(msg):
-                    val = getattr(msg, attr)
-                    if isinstance(val, (bytes, bytearray)) and len(val) > 0:
-                        buffer = val
-                        break
+            # 🔥 отправляем Message, НЕ buffer
+            Messaging.send(calling_instance, msg)
 
-            if buffer is None:
-                print("[HOME ERROR] Could not find encoded buffer in message")
-                return
-
-            # Отправляем буфер через Messaging
-            Messaging.send(calling_instance, buffer)
             print("[HOME] OK")
 
         except Exception as e:
             print(f"[HOME ERROR] {e}")
-            traceback.print_exc()
 
     def getCommandType(self):
         return 519
