@@ -1,4 +1,3 @@
-# PurchaseOfferCommand.py
 from Heart.Commands.LogicCommand import LogicCommand
 from Heart.Messaging import Messaging
 import json
@@ -17,18 +16,18 @@ class PurchaseOfferCommand(LogicCommand):
 
     def decode(self, calling_instance):
         fields = {}
-        # ✅ Проверка типа сообщения
-        if not hasattr(calling_instance, 'buffer') and not hasattr(calling_instance, 'messagePayload') and not hasattr(calling_instance, 'payload'):
+
+        # 🔥 Проверяем, что объект имеет буфер
+        buffer = getattr(calling_instance, 'buffer', None) or getattr(calling_instance, 'messagePayload', None) or getattr(calling_instance, 'payload', None)
+        offset = getattr(calling_instance, 'offset', 0)
+        if not buffer:
             print(f"[DECODE SKIP] Not a valid message for PurchaseOfferCommand: {type(calling_instance)}")
             return fields
 
+        buffer_len = len(buffer)
+
         try:
             LogicCommand.decode(calling_instance, fields, False)
-
-            # Получаем буфер через возможные атрибуты
-            buffer = getattr(calling_instance, 'buffer', None) or getattr(calling_instance, 'messagePayload', None) or getattr(calling_instance, 'payload', None)
-            offset = getattr(calling_instance, 'offset', 0)
-            buffer_len = len(buffer) if buffer else 0
 
             fields["OfferIndex"] = calling_instance.readVInt() if offset + 4 <= buffer_len else 0
             fields["CurrencyType"] = calling_instance.readVInt() if offset + 4 <= buffer_len else 0
@@ -55,7 +54,6 @@ class PurchaseOfferCommand(LogicCommand):
                 return
 
             player_dict = player.__dict__ if hasattr(player, '__dict__') else player
-
             offer_index = fields.get("OfferIndex", 0)
             currency_type = fields.get("CurrencyType", 0)
             shop_category = fields.get("ShopCategory", [0, 0])
@@ -70,25 +68,22 @@ class PurchaseOfferCommand(LogicCommand):
                 self.send_home_data(calling_instance)
                 return
 
-            # Проверка валюты
+            # Снимаем валюту
             if currency_type == 0:
                 current = player_dict.get("Gems", 0)
                 if current < price:
-                    print("[ERROR] Not enough Gems")
                     self.send_home_data(calling_instance)
                     return
                 player.Gems = current - price
             elif currency_type == 1:
                 current = player_dict.get("Coins", 0)
                 if current < price:
-                    print("[ERROR] Not enough Coins")
                     self.send_home_data(calling_instance)
                     return
                 player.Coins = current - price
             elif currency_type == 2:
                 current = player_dict.get("StarPoints", 0)
                 if current < price:
-                    print("[ERROR] Not enough StarPoints")
                     self.send_home_data(calling_instance)
                     return
                 player.StarPoints = current - price
@@ -98,7 +93,6 @@ class PurchaseOfferCommand(LogicCommand):
             if item_category == 16:
                 brawler_id = item_id[0] if isinstance(item_id, list) and len(item_id) > 0 else 0
                 skin_id = item_id[1] if isinstance(item_id, list) and len(item_id) > 1 else 0
-
                 if brawler_id > 0 and skin_id > 0:
                     owned = player_dict.get("OwnedBrawlers", {})
                     key = str(brawler_id)
@@ -109,10 +103,9 @@ class PurchaseOfferCommand(LogicCommand):
                     if skin_id not in owned[key]["Skins"]:
                         owned[key]["Skins"].append(skin_id)
                         print(f"[PURCHASE] Skin {skin_id} added for brawler {brawler_id}")
-
                     player.OwnedBrawlers = owned
 
-            # Сохраняем в БД
+            # Сохраняем и отправляем HomeData
             self.save_player_data(calling_instance, player)
             self.send_home_data(calling_instance)
             print(f"[PURCHASE] Completed for {player_name}")
@@ -131,8 +124,6 @@ class PurchaseOfferCommand(LogicCommand):
                 cursor.execute("UPDATE main SET Data=? WHERE Token=?", (json.dumps(player_data), getattr(calling_instance, 'player_token', '')))
                 db.commit()
                 print("[DB] Player data saved")
-            else:
-                print("[DB] No database connection")
         except Exception as e:
             print(f"[DB ERROR] {e}")
 
@@ -142,20 +133,14 @@ class PurchaseOfferCommand(LogicCommand):
             msg = OwnHomeDataMessage(calling_instance)
             msg.encode()
             buffer = getattr(msg, 'buffer', None) or getattr(msg, 'payload', None) or getattr(msg, 'data', None)
-
             if buffer and len(buffer) > 0:
                 try:
                     Messaging.send(calling_instance, buffer)
                     print("[HOME] Sent HomeData via Messaging")
                 except:
-                    try:
-                        if hasattr(calling_instance, 'send'):
-                            calling_instance.send(buffer)
-                            print("[HOME] Sent direct")
-                    except Exception as e:
-                        print(f"[HOME] Send failed: {e}")
-            else:
-                print("[HOME] No valid buffer")
+                    if hasattr(calling_instance, 'send'):
+                        calling_instance.send(buffer)
+                        print("[HOME] Sent direct")
         except Exception as e:
             print(f"[HOME ERROR] {e}")
 
