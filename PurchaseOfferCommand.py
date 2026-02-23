@@ -3,216 +3,160 @@ from Heart.Messaging import Messaging
 import json
 import traceback
 
+
 class PurchaseOfferCommand(LogicCommand):
+
     def __init__(self, commandData):
         super().__init__(commandData)
 
+    # --------------------------------------------------
+    # ENCODE
+    # --------------------------------------------------
     def encode(self, fields):
-        try:
-            LogicCommand.encode(self, fields)
-            self.writeVInt(1)
-            self.writeDataReference(0)
-            self.writeVInt(0)
-        except Exception as e:
-            print(f"[ENCODE ERROR] {e}")
+        LogicCommand.encode(self, fields)
+        self.writeVInt(1)
+        self.writeDataReference(0)
+        self.writeVInt(0)
         return self.messagePayload
 
+    # --------------------------------------------------
+    # DECODE (FIXED ORDER)
+    # --------------------------------------------------
     def decode(self, calling_instance):
         fields = {}
         try:
             LogicCommand.decode(calling_instance, fields, False)
-            fields["OfferIndex"] = self.safe_read_vint(calling_instance, 0)
-            fields["ShopCategory"] = self.safe_read_dataref(calling_instance, [0, 0])
-            fields["ItemID"] = self.safe_read_dataref(calling_instance, [0, 0])
-            fields["CurrencyType"] = self.safe_read_vint(calling_instance, 0)
-            fields["Price"] = self.safe_read_vint(calling_instance, 0)
-            fields["Unk6"] = self.safe_read_vint(calling_instance, 0)
+
+            # ⚠ правильный порядок (Heart 2020-2022 протокол)
+            fields["OfferIndex"] = calling_instance.readVInt()
+            fields["CurrencyType"] = calling_instance.readVInt()
+            fields["ShopCategory"] = calling_instance.readDataReference()
+            fields["ItemID"] = calling_instance.readDataReference()
+            fields["Price"] = calling_instance.readVInt()
+            fields["Unk6"] = calling_instance.readVInt()
+
             LogicCommand.parseFields(fields)
-            print(f"[DECODE] OfferIndex: {fields['OfferIndex']}")
-            print(f"[DECODE] ShopCategory: {fields['ShopCategory']}")
-            print(f"[DECODE] ItemID: {fields['ItemID']}")
-            print(f"[DECODE] CurrencyType: {fields['CurrencyType']}")
-            print(f"[DECODE] Price: {fields['Price']}")
+
+            print("[PURCHASE DECODE]", fields)
+
         except Exception as e:
-            print(f"[DECODE ERROR] {e}")
+            print("[DECODE ERROR]", e)
             traceback.print_exc()
+
         return fields
 
-    def safe_read_vint(self, caller, default=0):
-        try:
-            if hasattr(caller, 'offset') and hasattr(caller, 'buffer'):
-                if caller.offset < len(caller.buffer):
-                    return caller.readVInt()
-        except:
-            pass
-        return default
-
-    def safe_read_dataref(self, caller, default=[0, 0]):
-        try:
-            if hasattr(caller, 'offset') and hasattr(caller, 'buffer'):
-                if caller.offset + 8 <= len(caller.buffer):
-                    return caller.readDataReference()
-        except:
-            pass
-        return default
-
+    # --------------------------------------------------
+    # EXECUTE
+    # --------------------------------------------------
     def execute(self, calling_instance, fields):
-        purchase_success = False
         try:
             player = calling_instance.player
             if not player:
-                print("[ERROR] Player not found")
-                self.safe_send_home(calling_instance)
-                return
+                return self.safe_send_home(calling_instance)
 
-            player_dict = self.player_to_dict(player)
-            offer_index = fields.get("OfferIndex", 0)
-            shop_category = fields.get("ShopCategory", [0, 0])
-            item_id = fields.get("ItemID", [0, 0])
-            currency_type = fields.get("CurrencyType", 0)
-            price = fields.get("Price", 0)
-            
-            item_category = 0
-            if isinstance(shop_category, list) and len(shop_category) >= 2:
-                item_category = shop_category[0]
-            
-            brawler_id = 0
-            skin_id = 0
-            if isinstance(item_id, list) and len(item_id) >= 2:
-                brawler_id = item_id[0]
-                skin_id = item_id[1]
-            
-            player_name = player_dict.get('Name', 'Unknown')
-            print(f"[PURCHASE] Player: {player_name}")
-            print(f"[PURCHASE] Category: {item_category}, Item: ({brawler_id},{skin_id})")
-            print(f"[PURCHASE] Price: {price}, Currency: {currency_type}")
-            
-            if price <= 0 or (item_category == 0 and brawler_id == 0):
-                print(f"[PURCHASE] Nothing to buy")
-                self.safe_send_home(calling_instance)
-                return
-            
-            if currency_type == 0:
-                current = player_dict.get("Gems", 0)
-                if current >= price:
-                    self.safe_set_attr(player, "Gems", current - price)
-                    print(f"[PURCHASE] New gems: {current - price}")
-                    purchase_success = True
-                else:
-                    print(f"[ERROR] Not enough gems")
-            elif currency_type == 1:
-                current = player_dict.get("Coins", 0)
-                if current >= price:
-                    self.safe_set_attr(player, "Coins", current - price)
-                    print(f"[PURCHASE] New coins: {current - price}")
-                    purchase_success = True
-                else:
-                    print(f"[ERROR] Not enough coins")
-            elif currency_type == 2:
-                current = player_dict.get("StarPoints", 0)
-                if current >= price:
-                    self.safe_set_attr(player, "StarPoints", current - price)
-                    print(f"[PURCHASE] New starpoints: {current - price}")
-                    purchase_success = True
-                else:
-                    print(f"[ERROR] Not enough starpoints")
-            
-            if purchase_success and item_category == 16 and brawler_id > 0 and skin_id > 0:
-                owned_brawlers = self.safe_get_owned_brawlers(player)
-                brawler_key = str(brawler_id)
-                if brawler_key in owned_brawlers:
-                    brawler_data = owned_brawlers[brawler_key]
-                    if "Skins" not in brawler_data:
-                        brawler_data["Skins"] = []
-                    if skin_id not in brawler_data["Skins"]:
-                        brawler_data["Skins"].append(skin_id)
-                        self.safe_set_owned_brawlers(player, owned_brawlers)
-                        print(f"[PURCHASE] Skin {skin_id} added")
-                        self.safe_save_player(calling_instance, player)
+            pdata = self.player_to_dict(player)
+
+            offer_index = fields["OfferIndex"]
+            currency = fields["CurrencyType"]
+            shop_category = fields["ShopCategory"]
+            item = fields["ItemID"]
+            price = fields["Price"]
+
+            item_category = shop_category[0]
+            brawler_id = item[0]
+            skin_id = item[1]
+
+            print(f"[PURCHASE] cat={item_category} item={item} price={price} curr={currency}")
+
+            if price <= 0:
+                return self.safe_send_home(calling_instance)
+
+            # -------- валюта --------
+            if currency == 0:
+                if pdata["Gems"] < price:
+                    return self.safe_send_home(calling_instance)
+                player.Gems -= price
+
+            elif currency == 1:
+                if pdata["Coins"] < price:
+                    return self.safe_send_home(calling_instance)
+                player.Coins -= price
+
+            elif currency == 2:
+                if pdata["StarPoints"] < price:
+                    return self.safe_send_home(calling_instance)
+                player.StarPoints -= price
+
+            # -------- скин --------
+            if item_category == 16 and brawler_id and skin_id:
+                owned = self.safe_get_owned_brawlers(player)
+
+                key = str(brawler_id)
+                if key in owned:
+                    if "Skins" not in owned[key]:
+                        owned[key]["Skins"] = []
+
+                    if skin_id not in owned[key]["Skins"]:
+                        owned[key]["Skins"].append(skin_id)
+                        self.safe_set_owned_brawlers(player, owned)
+                        print("[PURCHASE] Skin added")
+
+            self.safe_save_player(calling_instance, player)
+
         except Exception as e:
-            print(f"[EXECUTE ERROR] {e}")
+            print("[EXECUTE ERROR]", e)
             traceback.print_exc()
+
         self.safe_send_home(calling_instance)
 
+    # --------------------------------------------------
+    # SAFE HOME (FIX CONNECTION LEN BUG)
+    # --------------------------------------------------
     def safe_send_home(self, calling_instance):
         try:
             from Heart.Packets.Server.OwnHomeDataMessage import OwnHomeDataMessage
-            home_msg = OwnHomeDataMessage(calling_instance)
-            home_msg.encode()
-            if hasattr(home_msg, 'buffer') and home_msg.buffer is not None:
-                try:
-                    Messaging.send(calling_instance, home_msg.buffer)
-                    print("[HOME] Sent")
-                except:
-                    try:
-                        calling_instance.send(home_msg.buffer)
-                        print("[HOME] Sent direct")
-                    except:
-                        print("[HOME] Send failed")
-            else:
-                print("[HOME] No buffer")
+
+            msg = OwnHomeDataMessage(calling_instance)
+            buffer = msg.encode()  # ⚠ encode возвращает bytes
+
+            if buffer:
+                Messaging.send(calling_instance, buffer)
+                print("[HOME] sent")
+
         except Exception as e:
-            print(f"[HOME ERROR] {e}")
+            print("[HOME ERROR]", e)
 
-    def safe_set_attr(self, obj, attr, value):
-        try:
-            if hasattr(obj, attr):
-                setattr(obj, attr, value)
-            elif isinstance(obj, dict):
-                obj[attr] = value
-            elif hasattr(obj, '__dict__'):
-                obj.__dict__[attr] = value
-        except:
-            pass
-
-    def safe_get_owned_brawlers(self, player):
-        try:
-            if hasattr(player, 'OwnedBrawlers'):
-                return player.OwnedBrawlers
-            elif isinstance(player, dict) and 'OwnedBrawlers' in player:
-                return player['OwnedBrawlers']
-            elif hasattr(player, '__dict__') and 'OwnedBrawlers' in player.__dict__:
-                return player.__dict__['OwnedBrawlers']
-        except:
-            pass
+    # --------------------------------------------------
+    # UTILS
+    # --------------------------------------------------
+    def player_to_dict(self, player):
+        if isinstance(player, dict):
+            return player
+        if hasattr(player, "__dict__"):
+            return player.__dict__
         return {}
 
-    def safe_set_owned_brawlers(self, player, brawlers):
-        try:
-            if hasattr(player, 'OwnedBrawlers'):
-                player.OwnedBrawlers = brawlers
-            elif isinstance(player, dict):
-                player['OwnedBrawlers'] = brawlers
-            elif hasattr(player, '__dict__'):
-                player.__dict__['OwnedBrawlers'] = brawlers
-        except:
-            pass
+    def safe_get_owned_brawlers(self, player):
+        if hasattr(player, "OwnedBrawlers"):
+            return player.OwnedBrawlers
+        return {}
+
+    def safe_set_owned_brawlers(self, player, b):
+        player.OwnedBrawlers = b
 
     def safe_save_player(self, calling_instance, player):
         try:
-            if hasattr(calling_instance, 'db') and calling_instance.db:
-                if hasattr(player, '__dict__'):
-                    player_json = json.dumps(player.__dict__)
-                elif isinstance(player, dict):
-                    player_json = json.dumps(player)
-                else:
-                    player_json = json.dumps({})
-                cursor = calling_instance.db.cursor()
-                cursor.execute("UPDATE main SET Data = ? WHERE Token = ?", (player_json, calling_instance.player_token))
+            if hasattr(calling_instance, "db"):
+                data = json.dumps(player.__dict__)
+                cur = calling_instance.db.cursor()
+                cur.execute(
+                    "UPDATE main SET Data=? WHERE Token=?",
+                    (data, calling_instance.player_token),
+                )
                 calling_instance.db.commit()
-                print("[DB] Saved")
+                print("[DB] saved")
         except Exception as e:
-            print(f"[DB ERROR] {e}")
-
-    def player_to_dict(self, player):
-        try:
-            if hasattr(player, '__dict__'):
-                return player.__dict__
-            elif isinstance(player, dict):
-                return player
-        except:
-            pass
-        return {}
+            print("[DB ERROR]", e)
 
     def getCommandType(self):
         return 519
