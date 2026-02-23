@@ -19,13 +19,32 @@ class PurchaseOfferCommand(LogicCommand):
         try:
             LogicCommand.decode(calling_instance, fields, False)
 
+            # Получаем доступ к буферу через разные возможные пути
+            buffer = None
+            offset = 0
+
+            if hasattr(calling_instance, 'buffer') and calling_instance.buffer:
+                buffer = calling_instance.buffer
+                offset = calling_instance.offset
+            elif hasattr(calling_instance, 'messagePayload') and calling_instance.messagePayload:
+                buffer = calling_instance.messagePayload
+                offset = calling_instance.offset
+            elif hasattr(calling_instance, 'payload') and calling_instance.payload:
+                buffer = calling_instance.payload
+                offset = calling_instance.offset
+            else:
+                print("[DECODE] Cannot find buffer source")
+                return fields
+
+            buffer_len = len(buffer)
+
             # Безопасное чтение с проверкой длины
-            fields["OfferIndex"] = calling_instance.readVInt() if calling_instance.offset + 4 <= len(calling_instance.buffer) else 0
-            fields["CurrencyType"] = calling_instance.readVInt() if calling_instance.offset + 4 <= len(calling_instance.buffer) else 0
-            fields["ShopCategory"] = calling_instance.readDataReference() if calling_instance.offset + 8 <= len(calling_instance.buffer) else [0, 0]
-            fields["ItemID"] = calling_instance.readDataReference() if calling_instance.offset + 8 <= len(calling_instance.buffer) else [0, 0]
-            fields["Price"] = calling_instance.readVInt() if calling_instance.offset + 4 <= len(calling_instance.buffer) else 0
-            fields["Unk6"] = calling_instance.readVInt() if calling_instance.offset + 4 <= len(calling_instance.buffer) else 0
+            fields["OfferIndex"] = calling_instance.readVInt() if offset + 4 <= buffer_len else 0
+            fields["CurrencyType"] = calling_instance.readVInt() if offset + 4 <= buffer_len else 0
+            fields["ShopCategory"] = calling_instance.readDataReference() if offset + 8 <= buffer_len else [0, 0]
+            fields["ItemID"] = calling_instance.readDataReference() if offset + 8 <= buffer_len else [0, 0]
+            fields["Price"] = calling_instance.readVInt() if offset + 4 <= buffer_len else 0
+            fields["Unk6"] = calling_instance.readVInt() if offset + 4 <= buffer_len else 0
 
             print(f"[DECODE] OfferIndex={fields['OfferIndex']}, Currency={fields['CurrencyType']}, "
                   f"Cat={fields['ShopCategory']}, Item={fields['ItemID']}, Price={fields['Price']}")
@@ -55,7 +74,7 @@ class PurchaseOfferCommand(LogicCommand):
             player_name = player_dict.get('Name', 'Unknown')
             print(f"[PURCHASE] Player {player_name} buying cat={shop_category}, item={item_id}, price={price}, curr={currency_type}")
 
-            # Если это не настоящая покупка (скин за 0 или левая валюта)
+            # Если это не настоящая покупка
             if price <= 0 or currency_type not in [0, 1, 2]:
                 print(f"[PURCHASE] Not a real purchase (price={price}, currency={currency_type})")
                 self.send_home_data(calling_instance)
@@ -130,6 +149,8 @@ class PurchaseOfferCommand(LogicCommand):
                 db = calling_instance.db
             elif hasattr(calling_instance, 'player') and hasattr(calling_instance.player, 'db'):
                 db = calling_instance.player.db
+            elif hasattr(calling_instance, 'parent') and hasattr(calling_instance.parent, 'db'):
+                db = calling_instance.parent.db
 
             if db:
                 player_data = player.__dict__ if hasattr(player, '__dict__') else player
@@ -152,14 +173,27 @@ class PurchaseOfferCommand(LogicCommand):
             msg.encode()
             
             # Получаем буфер
-            buffer = msg.buffer if hasattr(msg, 'buffer') else None
+            buffer = None
+            if hasattr(msg, 'buffer'):
+                buffer = msg.buffer
+            elif hasattr(msg, 'payload'):
+                buffer = msg.payload
+            elif hasattr(msg, 'data'):
+                buffer = msg.data
             
             if buffer and len(buffer) > 0:
                 try:
                     Messaging.send(calling_instance, buffer)
-                    print("[HOME] Sent HomeData")
-                except Exception as e:
-                    print(f"[HOME] Send failed: {e}")
+                    print("[HOME] Sent HomeData via Messaging")
+                except:
+                    try:
+                        if hasattr(calling_instance, 'send'):
+                            calling_instance.send(buffer)
+                            print("[HOME] Sent direct")
+                        else:
+                            print("[HOME] Cannot send directly")
+                    except Exception as e:
+                        print(f"[HOME] Send failed: {e}")
             else:
                 print("[HOME] No valid buffer")
         except Exception as e:
