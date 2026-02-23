@@ -55,11 +55,8 @@ class PurchaseOfferCommand(LogicCommand):
                 self.send_home_data(calling_instance)
                 return
 
-            # Преобразуем объект в словарь если нужно
-            if hasattr(player, '__dict__'):
-                player_dict = player.__dict__
-            else:
-                player_dict = player
+            # Преобразуем объект в словарь
+            player_dict = player.__dict__ if hasattr(player, '__dict__') else player
 
             offer_index = fields.get("OfferIndex", 0)
             shop_category = fields.get("ShopCategory", [0, 0])
@@ -70,29 +67,37 @@ class PurchaseOfferCommand(LogicCommand):
             player_name = player_dict.get('Name', 'Unknown')
             print(f"[PURCHASE] Player {player_name} buying cat={shop_category}, item={item_id}, price={price}, curr={currency_type}")
 
-            # Проверка валюты через словарь
+            # Если цена 0 — ничего не покупаем, но отправляем home
+            if price <= 0:
+                print("[PURCHASE] Price is 0, skipping")
+                self.send_home_data(calling_instance)
+                return
+
+            # Проверка валюты
             if currency_type == 0:
-                if player_dict.get("Gems", 0) < price:
+                current = player_dict.get("Gems", 0)
+                if current < price:
                     print("[ERROR] Not enough Gems")
                     self.send_home_data(calling_instance)
                     return
-                # Устанавливаем через объект
                 if hasattr(player, 'Gems'):
-                    player.Gems = player_dict.get("Gems", 0) - price
+                    player.Gems = current - price
             elif currency_type == 1:
-                if player_dict.get("Coins", 0) < price:
+                current = player_dict.get("Coins", 0)
+                if current < price:
                     print("[ERROR] Not enough Coins")
                     self.send_home_data(calling_instance)
                     return
                 if hasattr(player, 'Coins'):
-                    player.Coins = player_dict.get("Coins", 0) - price
+                    player.Coins = current - price
             elif currency_type == 2:
-                if player_dict.get("StarPoints", 0) < price:
+                current = player_dict.get("StarPoints", 0)
+                if current < price:
                     print("[ERROR] Not enough StarPoints")
                     self.send_home_data(calling_instance)
                     return
                 if hasattr(player, 'StarPoints'):
-                    player.StarPoints = player_dict.get("StarPoints", 0) - price
+                    player.StarPoints = current - price
 
             # Выдача скина
             item_category = shop_category[0] if isinstance(shop_category, list) else 0
@@ -103,22 +108,19 @@ class PurchaseOfferCommand(LogicCommand):
                 owned = player_dict.get("OwnedBrawlers", {})
                 key = str(brawler_id)
                 if key not in owned:
-                    owned[key] = {"Skins":[]}
-
+                    owned[key] = {"Skins": []}
                 if "Skins" not in owned[key]:
                     owned[key]["Skins"] = []
-
                 if skin_id not in owned[key]["Skins"]:
                     owned[key]["Skins"].append(skin_id)
                     print(f"[PURCHASE] Skin {skin_id} added for brawler {brawler_id}")
 
-                # Сохраняем обратно в объект
                 if hasattr(player, 'OwnedBrawlers'):
                     player.OwnedBrawlers = owned
                 elif hasattr(player, '__dict__'):
                     player.__dict__['OwnedBrawlers'] = owned
 
-            # Сохраняем
+            # Сохраняем в БД
             self.save_player_data(calling_instance, player)
 
             # Отправляем home data (анимация!)
@@ -131,27 +133,56 @@ class PurchaseOfferCommand(LogicCommand):
             self.send_home_data(calling_instance)
 
     def save_player_data(self, calling_instance, player):
+        """Сохраняет данные игрока в БД"""
         try:
-            if hasattr(player, '__dict__'):
-                player_data = player.__dict__
-            else:
-                player_data = player
+            # Пробуем получить доступ к БД через разные пути
+            db = None
+            if hasattr(calling_instance, 'db'):
+                db = calling_instance.db
+            elif hasattr(calling_instance, 'player') and hasattr(calling_instance.player, 'db'):
+                db = calling_instance.player.db
+            elif hasattr(calling_instance, 'parent') and hasattr(calling_instance.parent, 'db'):
+                db = calling_instance.parent.db
 
-            cursor = calling_instance.db.cursor()
-            cursor.execute("UPDATE main SET Data=? WHERE Token=?", (json.dumps(player_data), calling_instance.player_token))
-            calling_instance.db.commit()
-            print("[DB] Player data saved")
+            if db:
+                player_data = player.__dict__ if hasattr(player, '__dict__') else player
+                cursor = db.cursor()
+                cursor.execute("UPDATE main SET Data=? WHERE Token=?", 
+                             (json.dumps(player_data), calling_instance.player_token))
+                db.commit()
+                print("[DB] Player data saved")
+            else:
+                print("[DB] No database connection")
         except Exception as e:
             print(f"[DB ERROR] {e}")
 
     def send_home_data(self, calling_instance):
+        """Отправляет обновленные данные домой"""
         try:
             from Heart.Packets.Server.OwnHomeDataMessage import OwnHomeDataMessage
+            
             msg = OwnHomeDataMessage(calling_instance)
             msg.encode()
-            if hasattr(msg, 'buffer') and msg.buffer:
-                Messaging.send(calling_instance, msg.buffer)
-                print("[HOME] Sent HomeData")
+            
+            # Получаем буфер разными способами
+            buffer = None
+            if hasattr(msg, 'buffer'):
+                buffer = msg.buffer
+            elif hasattr(msg, 'payload'):
+                buffer = msg.payload
+            elif hasattr(msg, 'data'):
+                buffer = msg.data
+            
+            if buffer:
+                try:
+                    Messaging.send(calling_instance, buffer)
+                    print("[HOME] Sent HomeData")
+                except:
+                    try:
+                        calling_instance.send(buffer)
+                        print("[HOME] Sent direct")
+                    except Exception as e:
+                        print(f"[HOME] Send failed: {e}")
             else:
                 print("[HOME] No buffer")
         except Exception as e:
