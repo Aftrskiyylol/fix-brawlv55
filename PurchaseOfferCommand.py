@@ -19,13 +19,13 @@ class PurchaseOfferCommand(LogicCommand):
         try:
             LogicCommand.decode(calling_instance, fields, False)
 
-            # ⚠ ПРАВИЛЬНЫЙ ПОРЯДОК ПОЛЕЙ (как в рабочем протоколе)
-            fields["OfferIndex"] = calling_instance.readVInt()
-            fields["CurrencyType"] = calling_instance.readVInt()
-            fields["ShopCategory"] = calling_instance.readDataReference()
-            fields["ItemID"] = calling_instance.readDataReference()
-            fields["Price"] = calling_instance.readVInt()
-            fields["Unk6"] = calling_instance.readVInt()
+            # Безопасное чтение с проверкой длины
+            fields["OfferIndex"] = calling_instance.readVInt() if calling_instance.offset + 4 <= len(calling_instance.buffer) else 0
+            fields["CurrencyType"] = calling_instance.readVInt() if calling_instance.offset + 4 <= len(calling_instance.buffer) else 0
+            fields["ShopCategory"] = calling_instance.readDataReference() if calling_instance.offset + 8 <= len(calling_instance.buffer) else [0, 0]
+            fields["ItemID"] = calling_instance.readDataReference() if calling_instance.offset + 8 <= len(calling_instance.buffer) else [0, 0]
+            fields["Price"] = calling_instance.readVInt() if calling_instance.offset + 4 <= len(calling_instance.buffer) else 0
+            fields["Unk6"] = calling_instance.readVInt() if calling_instance.offset + 4 <= len(calling_instance.buffer) else 0
 
             print(f"[DECODE] OfferIndex={fields['OfferIndex']}, Currency={fields['CurrencyType']}, "
                   f"Cat={fields['ShopCategory']}, Item={fields['ItemID']}, Price={fields['Price']}")
@@ -34,24 +34,6 @@ class PurchaseOfferCommand(LogicCommand):
             print(f"[DECODE ERROR] {e}")
             traceback.print_exc()
         return fields
-
-    def safe_read_vint(self, caller, default=0):
-        try:
-            if hasattr(caller, 'offset') and hasattr(caller, 'buffer'):
-                if caller.offset < len(caller.buffer):
-                    return caller.readVInt()
-        except:
-            pass
-        return default
-
-    def safe_read_dataref(self, caller, default=[0, 0]):
-        try:
-            if hasattr(caller, 'offset') and hasattr(caller, 'buffer'):
-                if caller.offset + 8 <= len(caller.buffer):
-                    return caller.readDataReference()
-        except:
-            pass
-        return default
 
     def execute(self, calling_instance, fields):
         try:
@@ -73,9 +55,9 @@ class PurchaseOfferCommand(LogicCommand):
             player_name = player_dict.get('Name', 'Unknown')
             print(f"[PURCHASE] Player {player_name} buying cat={shop_category}, item={item_id}, price={price}, curr={currency_type}")
 
-            # Если цена 0 — ничего не покупаем, но отправляем home
-            if price <= 0:
-                print("[PURCHASE] Price is 0, skipping")
+            # Если это не настоящая покупка (скин за 0 или левая валюта)
+            if price <= 0 or currency_type not in [0, 1, 2]:
+                print(f"[PURCHASE] Not a real purchase (price={price}, currency={currency_type})")
                 self.send_home_data(calling_instance)
                 return
 
@@ -106,25 +88,26 @@ class PurchaseOfferCommand(LogicCommand):
                     player.StarPoints = current - price
 
             # Выдача скина
-            item_category = shop_category[0] if isinstance(shop_category, list) else 0
+            item_category = shop_category[0] if isinstance(shop_category, list) and len(shop_category) > 0 else 0
             if item_category == 16:
-                brawler_id = item_id[0] if isinstance(item_id, list) else 0
+                brawler_id = item_id[0] if isinstance(item_id, list) and len(item_id) > 0 else 0
                 skin_id = item_id[1] if isinstance(item_id, list) and len(item_id) > 1 else 0
 
-                owned = player_dict.get("OwnedBrawlers", {})
-                key = str(brawler_id)
-                if key not in owned:
-                    owned[key] = {"Skins": []}
-                if "Skins" not in owned[key]:
-                    owned[key]["Skins"] = []
-                if skin_id not in owned[key]["Skins"]:
-                    owned[key]["Skins"].append(skin_id)
-                    print(f"[PURCHASE] Skin {skin_id} added for brawler {brawler_id}")
+                if brawler_id > 0 and skin_id > 0:
+                    owned = player_dict.get("OwnedBrawlers", {})
+                    key = str(brawler_id)
+                    if key not in owned:
+                        owned[key] = {"Skins": []}
+                    if "Skins" not in owned[key]:
+                        owned[key]["Skins"] = []
+                    if skin_id not in owned[key]["Skins"]:
+                        owned[key]["Skins"].append(skin_id)
+                        print(f"[PURCHASE] Skin {skin_id} added for brawler {brawler_id}")
 
-                if hasattr(player, 'OwnedBrawlers'):
-                    player.OwnedBrawlers = owned
-                elif hasattr(player, '__dict__'):
-                    player.__dict__['OwnedBrawlers'] = owned
+                    if hasattr(player, 'OwnedBrawlers'):
+                        player.OwnedBrawlers = owned
+                    elif hasattr(player, '__dict__'):
+                        player.__dict__['OwnedBrawlers'] = owned
 
             # Сохраняем в БД
             self.save_player_data(calling_instance, player)
@@ -141,16 +124,12 @@ class PurchaseOfferCommand(LogicCommand):
     def save_player_data(self, calling_instance, player):
         """Сохраняет данные игрока в БД"""
         try:
-            # Пробуем получить доступ к БД через разные пути
+            # Пробуем получить доступ к БД
             db = None
             if hasattr(calling_instance, 'db'):
                 db = calling_instance.db
             elif hasattr(calling_instance, 'player') and hasattr(calling_instance.player, 'db'):
                 db = calling_instance.player.db
-            elif hasattr(calling_instance, 'parent') and hasattr(calling_instance.parent, 'db'):
-                db = calling_instance.parent.db
-            elif hasattr(calling_instance, 'connection') and hasattr(calling_instance.connection, 'db'):
-                db = calling_instance.connection.db
 
             if db:
                 player_data = player.__dict__ if hasattr(player, '__dict__') else player
@@ -172,28 +151,15 @@ class PurchaseOfferCommand(LogicCommand):
             msg = OwnHomeDataMessage(calling_instance)
             msg.encode()
             
-            # Получаем буфер разными способами
-            buffer = None
-            if hasattr(msg, 'buffer'):
-                buffer = msg.buffer
-            elif hasattr(msg, 'payload'):
-                buffer = msg.payload
-            elif hasattr(msg, 'data'):
-                buffer = msg.data
+            # Получаем буфер
+            buffer = msg.buffer if hasattr(msg, 'buffer') else None
             
             if buffer and len(buffer) > 0:
                 try:
                     Messaging.send(calling_instance, buffer)
-                    print("[HOME] Sent HomeData via Messaging")
-                except:
-                    try:
-                        if hasattr(calling_instance, 'send'):
-                            calling_instance.send(buffer)
-                            print("[HOME] Sent direct")
-                        else:
-                            print("[HOME] Cannot send directly")
-                    except Exception as e:
-                        print(f"[HOME] Send failed: {e}")
+                    print("[HOME] Sent HomeData")
+                except Exception as e:
+                    print(f"[HOME] Send failed: {e}")
             else:
                 print("[HOME] No valid buffer")
         except Exception as e:
