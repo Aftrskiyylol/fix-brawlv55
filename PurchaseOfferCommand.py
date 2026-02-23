@@ -16,32 +16,35 @@ class PurchaseOfferCommand(LogicCommand):
 
     def decode(self, calling_instance):
         fields = {}
-
-        # 🔥 Проверяем, что объект имеет буфер
         buffer = getattr(calling_instance, 'buffer', None) or getattr(calling_instance, 'messagePayload', None) or getattr(calling_instance, 'payload', None)
-        offset = getattr(calling_instance, 'offset', 0)
         if not buffer:
-            print(f"[DECODE SKIP] Not a valid message for PurchaseOfferCommand: {type(calling_instance)}")
+            print(f"[DECODE SKIP] Not a valid message: {type(calling_instance)}")
             return fields
-
-        buffer_len = len(buffer)
 
         try:
             LogicCommand.decode(calling_instance, fields, False)
+        except Exception:
+            pass
 
-            fields["OfferIndex"] = calling_instance.readVInt() if offset + 4 <= buffer_len else 0
-            fields["CurrencyType"] = calling_instance.readVInt() if offset + 4 <= buffer_len else 0
-            fields["ShopCategory"] = calling_instance.readDataReference() if offset + 8 <= buffer_len else [0, 0]
-            fields["ItemID"] = calling_instance.readDataReference() if offset + 8 <= buffer_len else [0, 0]
-            fields["Price"] = calling_instance.readVInt() if offset + 4 <= buffer_len else 0
-            fields["Unk6"] = calling_instance.readVInt() if offset + 4 <= buffer_len else 0
+        # 🔹 Безопасное чтение всех полей
+        for key, reader in [
+            ("OfferIndex", calling_instance.readVInt),
+            ("CurrencyType", calling_instance.readVInt),
+            ("ShopCategory", calling_instance.readDataReference),
+            ("ItemID", calling_instance.readDataReference),
+            ("Price", calling_instance.readVInt),
+            ("Unk6", calling_instance.readVInt),
+        ]:
+            try:
+                fields[key] = reader()
+            except Exception:
+                if key in ["ShopCategory", "ItemID"]:
+                    fields[key] = [0, 0]
+                else:
+                    fields[key] = 0
 
-            print(f"[DECODE] OfferIndex={fields['OfferIndex']}, Currency={fields['CurrencyType']}, "
-                  f"Cat={fields['ShopCategory']}, Item={fields['ItemID']}, Price={fields['Price']}")
-
-        except Exception as e:
-            print(f"[DECODE ERROR] {e}")
-            traceback.print_exc()
+        print(f"[DECODE] OfferIndex={fields['OfferIndex']}, Currency={fields['CurrencyType']}, "
+              f"Cat={fields['ShopCategory']}, Item={fields['ItemID']}, Price={fields['Price']}")
 
         return fields
 
@@ -68,7 +71,7 @@ class PurchaseOfferCommand(LogicCommand):
                 self.send_home_data(calling_instance)
                 return
 
-            # Снимаем валюту
+            # 🔹 Снимаем валюту
             if currency_type == 0:
                 current = player_dict.get("Gems", 0)
                 if current < price:
@@ -88,7 +91,7 @@ class PurchaseOfferCommand(LogicCommand):
                     return
                 player.StarPoints = current - price
 
-            # Выдача скина
+            # 🔹 Выдача скина
             item_category = shop_category[0] if isinstance(shop_category, list) and len(shop_category) > 0 else 0
             if item_category == 16:
                 brawler_id = item_id[0] if isinstance(item_id, list) and len(item_id) > 0 else 0
@@ -105,7 +108,7 @@ class PurchaseOfferCommand(LogicCommand):
                         print(f"[PURCHASE] Skin {skin_id} added for brawler {brawler_id}")
                     player.OwnedBrawlers = owned
 
-            # Сохраняем и отправляем HomeData
+            # 🔹 Сохраняем и отправляем HomeData
             self.save_player_data(calling_instance, player)
             self.send_home_data(calling_instance)
             print(f"[PURCHASE] Completed for {player_name}")
