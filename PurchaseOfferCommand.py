@@ -67,11 +67,15 @@ class PurchaseOfferCommand(LogicCommand):
         return default
 
     def execute(self, calling_instance, fields):
+        purchase_success = False
+        
         try:
             # Получаем игрока
             player = calling_instance.player
             if not player:
                 print("[ERROR] Player not found")
+                # Даже если нет игрока, отправляем home data чтобы избежать рассинхрона
+                self.send_home_data(calling_instance)
                 return
 
             # Преобразуем игрока в словарь для удобства
@@ -87,10 +91,8 @@ class PurchaseOfferCommand(LogicCommand):
             # Приводим к нормальному виду
             if isinstance(shop_category, list) and len(shop_category) >= 2:
                 item_category = shop_category[0]
-                item_sub = shop_category[1]
             else:
                 item_category = 0
-                item_sub = 0
                 print(f"[WARN] Invalid shop_category: {shop_category}")
             
             if isinstance(item_id, list) and len(item_id) >= 2:
@@ -107,9 +109,11 @@ class PurchaseOfferCommand(LogicCommand):
             print(f"[PURCHASE] Category: {item_category}, Item: ({brawler_id},{skin_id})")
             print(f"[PURCHASE] Price: {price}, Currency: {currency_type}")
             
-            # Если цена 0 или нет предмета — ничего не делаем
+            # ЕСЛИ ЦЕНА 0 ИЛИ НЕТ ПРЕДМЕТА - всё равно отправляем home data
             if price <= 0 or (item_category == 0 and brawler_id == 0):
                 print(f"[PURCHASE] Nothing to buy (price=0 or invalid item)")
+                purchase_success = False
+                self.send_home_data(calling_instance)
                 return
             
             # Проверка баланса
@@ -117,30 +121,35 @@ class PurchaseOfferCommand(LogicCommand):
                 current = player_dict.get("Gems", 0)
                 if current < price:
                     print(f"[ERROR] Not enough gems: has {current}, needs {price}")
+                    self.send_home_data(calling_instance)
                     return
-                # Обновляем через setattr (так как player — объект)
                 setattr(player, "Gems", current - price)
                 print(f"[PURCHASE] New gems balance: {current - price}")
+                purchase_success = True
                 
             elif currency_type == 1:  # Монеты
                 current = player_dict.get("Coins", 0)
                 if current < price:
                     print(f"[ERROR] Not enough coins: has {current}, needs {price}")
+                    self.send_home_data(calling_instance)
                     return
                 setattr(player, "Coins", current - price)
                 print(f"[PURCHASE] New coins balance: {current - price}")
+                purchase_success = True
                 
             elif currency_type == 2:  # Звездные очки
                 current = player_dict.get("StarPoints", 0)
                 if current < price:
                     print(f"[ERROR] Not enough starpoints: has {current}, needs {price}")
+                    self.send_home_data(calling_instance)
                     return
                 setattr(player, "StarPoints", current - price)
                 print(f"[PURCHASE] New starpoints: {current - price}")
+                purchase_success = True
             
             # Выдача предмета (скины)
             if item_category == 16 and brawler_id > 0 and skin_id > 0:
-                # Получаем OwnedBrawlers (это может быть атрибут или ключ в словаре)
+                # Получаем OwnedBrawlers
                 owned_brawlers = self.get_owned_brawlers(player)
                 
                 if owned_brawlers and str(brawler_id) in owned_brawlers:
@@ -153,20 +162,25 @@ class PurchaseOfferCommand(LogicCommand):
                         brawler_data["Skins"].append(skin_id)
                         self.set_owned_brawlers(player, owned_brawlers)
                         print(f"[PURCHASE] Skin {skin_id} for brawler {brawler_id} added")
+                        purchase_success = True
                 else:
                     print(f"[WARN] Brawler {brawler_id} not owned by player")
             
-            # Сохраняем в БД
-            self.save_player_data(calling_instance, player)
-            
-            # Отправляем обновление клиенту
-            self.send_home_data(calling_instance)
-            
-            print(f"[PURCHASE] ✅ Success for {player_name}")
+            # Сохраняем в БД если покупка успешна
+            if purchase_success:
+                self.save_player_data(calling_instance, player)
             
         except Exception as e:
             print(f"[EXECUTE ERROR] {e}")
             traceback.print_exc()
+        
+        # ВАЖНО: ВСЕГДА отправляем обновление клиенту, даже если покупка не удалась
+        # Это предотвращает рассинхрон
+        try:
+            self.send_home_data(calling_instance)
+            print(f"[SYNC] Home data sent to client (success={purchase_success})")
+        except Exception as e:
+            print(f"[SYNC ERROR] {e}")
 
     def player_to_dict(self, player):
         """Преобразует объект Player в словарь"""
@@ -188,7 +202,6 @@ class PurchaseOfferCommand(LogicCommand):
             elif isinstance(player, dict) and 'OwnedBrawlers' in player:
                 return player['OwnedBrawlers']
             else:
-                # Пробуем найти в __dict__
                 if hasattr(player, '__dict__') and 'OwnedBrawlers' in player.__dict__:
                     return player.__dict__['OwnedBrawlers']
         except:
@@ -211,7 +224,6 @@ class PurchaseOfferCommand(LogicCommand):
         """Сохраняет данные игрока в БД"""
         try:
             if hasattr(calling_instance, 'db') and calling_instance.db:
-                # Преобразуем игрока в JSON
                 if hasattr(player, '__dict__'):
                     player_json = json.dumps(player.__dict__)
                 elif isinstance(player, dict):
