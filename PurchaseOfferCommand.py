@@ -18,12 +18,23 @@ class PurchaseOfferCommand(LogicCommand):
     def decode(self, calling_instance):
         fields = {}
         LogicCommand.decode(calling_instance, fields, False)
-        fields["OfferIndex"] = calling_instance.readVInt()  # Индекс предложения
-        fields["ShopCategory"] = calling_instance.readDataReference()  # Категория (например скины)
-        fields["ItemID"] = calling_instance.readDataReference()  # ID предмета
-        fields["CurrencyType"] = calling_instance.readVInt()  # 0 = гемы, 1 = монеты, 2 = звездные
-        fields["Price"] = calling_instance.readVInt()  # Цена
-        fields["Unk6"] = calling_instance.readVInt()  # Неизвестно, но надо прочитать
+        fields["OfferIndex"] = calling_instance.readVInt()
+        fields["ShopCategory"] = calling_instance.readDataReference()
+        fields["ItemID"] = calling_instance.readDataReference()
+        fields["CurrencyType"] = calling_instance.readVInt()
+        
+        # ✅ Читаем Price только если остались данные
+        if calling_instance.messagePayloadLength - calling_instance.offset >= 4:
+            fields["Price"] = calling_instance.readVInt()
+        else:
+            fields["Price"] = 0
+            print(f"[WARN] Price field missing for offer {fields['OfferIndex']}")
+        
+        # ✅ Unk6 тоже читаем опционально
+        if calling_instance.messagePayloadLength - calling_instance.offset >= 4:
+            fields["Unk6"] = calling_instance.readVInt()
+        else:
+            fields["Unk6"] = 0
         
         LogicCommand.parseFields(fields)
         return fields
@@ -98,8 +109,6 @@ class PurchaseOfferCommand(LogicCommand):
     def save_player_data(self, calling_instance, player_data):
         """Сохраняет данные игрока в БД"""
         try:
-            # Здесь должен быть код сохранения в БД
-            # В зависимости от твоей структуры
             cursor = calling_instance.db.cursor()
             cursor.execute(
                 "UPDATE main SET Data = ? WHERE Token = ?",
